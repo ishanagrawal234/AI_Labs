@@ -1,0 +1,35 @@
+=== First-Order (Bigram) Normalisation Test ===
+  <START>       sum = 1.000000  [OK]
+  cat           sum = 1.000000  [OK]
+  dog           sum = 1.000000  [OK]
+  mat           sum = 1.000000  [OK]
+  on            sum = 1.000000  [OK]
+  park          sum = 1.000000  [OK]
+  ran           sum = 1.000000  [OK]
+  rug           sum = 1.000000  [OK]
+  sat           sum = 1.000000  [OK]
+  the           sum = 1.000000  [OK]
+  to            sum = 1.000000  [OK]
+  Result: ALL PASS
+
+=== Second-Order (Trigram) Normalisation Test ===
+  ('<START>', 'the')                   sum = 1.000000  [OK]
+  ('cat', 'ran')                       sum = 1.000000  [OK]
+  ('cat', 'sat')                       sum = 1.000000  [OK]
+  ('dog', 'ran')                       sum = 1.000000  [OK]
+  ('dog', 'sat')                       sum = 1.000000  [OK]
+  ('on', 'the')                        sum = 1.000000  [OK]
+  ('ran', 'to')                        sum = 1.000000  [OK]
+  ('sat', 'on')                        sum = 1.000000  [OK]
+  ('the', 'cat')                       sum = 1.000000  [OK]
+  ('the', 'dog')                       sum = 1.000000  [OK]
+  ('the', 'mat')                       sum = 1.000000  [OK]
+  ('the', 'park')                      sum = 1.000000  [OK]
+  ('the', 'rug')                       sum = 1.000000  [OK]
+  ('to', 'the')                        sum = 1.000000  [OK]
+  Result: ALL PASS
+
+Conclusion:
+For every current word w (first-order) and every context pair (w1, w2) (second-order),
+the sum of P(v | w) over all successor words v equals exactly 1.000000.
+Both models define valid, properly normalised conditional probability distributions.

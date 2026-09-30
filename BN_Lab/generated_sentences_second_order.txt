@@ -1,0 +1,35 @@
+=== Second-Order Model: Sampling (20 sentences) ===
+ 1. the cat sat on the rug
+ 2. the dog sat on the rug
+ 3. the dog sat on the mat
+ 4. the cat sat on the mat
+ 5. the cat ran to the park
+ 6. the dog sat on the rug
+ 7. the cat ran to the park
+ 8. the dog sat on the mat
+ 9. the cat sat on the mat
+10. the cat sat on the mat
+11. the dog sat on the rug
+12. the cat sat on the mat
+13. the dog sat on the rug
+14. the cat ran to the park
+15. the dog sat on the mat
+16. the dog ran to the park
+17. the dog sat on the mat
+18. the dog sat on the mat
+19. the dog sat on the rug
+20. the cat ran to the park
+
+=== Second-Order Model: Greedy (5 sentences) ===
+1. the cat sat on the mat
+2. the cat sat on the mat
+3. the cat sat on the mat
+4. the cat sat on the mat
+5. the cat sat on the mat
+
+=== Second-Order Model: Sampling (5 sentences) ===
+1. the cat sat on the mat
+2. the dog sat on the rug
+3. the cat sat on the rug
+4. the cat sat on the rug
+5. the dog sat on the mat

@@ -1,0 +1,288 @@
+Q1. Why is the autoregressive (chain-rule) decomposition useful for generating text?
+
+The chain-rule decomposition P(X1, ..., X6) = P(X1) * P(X2|X1) * P(X3|X1,X2) * ... * P(X6|X1,...,X5) is useful for text generation because it breaks the intractable problem of modelling a full joint distribution over an entire sequence into a series of manageable conditional probability steps. Instead of needing to specify the probability of every possible sentence directly (which would require an astronomically large table), we only need to know, at each step, the probability of the next word given all the words produced so far.
+
+This decomposition directly mirrors the left-to-right process of writing or speaking: we produce one word at a time, each word depending on the context that has already been generated. In practice, this means we can generate text sequentially:
+  1. Sample X1 from P(X1).
+  2. Sample X2 from P(X2 | X1).
+  3. Sample X3 from P(X3 | X1, X2).
+  ... and so on until a stopping condition (e.g., an <END> token) is reached.
+
+Each step is a well-defined probability distribution that can be estimated from data or parameterised by a neural network, making the whole generation process both principled and computationally feasible.
+
+
+Q2. What independence assumption is being made by the first-order Bayesian network X1 -> X2 -> X3 -> X4?
+
+The network assumes the first-order Markov property:
+
+  P(Xt | X1, X2, ..., X(t-1)) = P(Xt | X(t-1))
+
+In probability notation, this means that each word Xt is conditionally independent of all earlier words X1, ..., X(t-2) given the immediately preceding word X(t-1). Formally:
+
+  Xt is independent of {X1, ..., X(t-2)} | X(t-1)
+
+This simplifies the full chain-rule factorisation
+  P(X1, X2, X3, X4) = P(X1) * P(X2|X1) * P(X3|X1,X2) * P(X4|X1,X2,X3)
+to the much simpler
+  P(X1, X2, X3, X4) = P(X1) * P(X2|X1) * P(X3|X2) * P(X4|X3).
+
+The consequence is that the model has no memory beyond the most recent word. For example, when predicting X4, the model only looks at X3 and completely ignores X1 and X2. This is a strong simplification that makes estimation easy but limits the model's ability to capture long-range dependencies in language.
+
+
+Q3. Conditional probability distributions P(next word | current word) for selected words.
+
+Based on the training data:
+  the cat sat on the mat
+  the cat sat on the rug
+  the dog sat on the mat
+  the dog ran to the park
+  the cat ran to the park
+  the dog sat on the rug
+
+P(next word | current word = "the"):
+  P(cat | the) = 3/12 = 0.2500
+  P(dog | the) = 3/12 = 0.2500
+  P(mat | the) = 2/12 = 0.1667
+  P(rug | the) = 2/12 = 0.1667
+  P(park | the) = 2/12 = 0.1667
+
+P(next word | current word = "cat"):
+  P(sat | cat) = 2/3 = 0.6667
+  P(ran | cat) = 1/3 = 0.3333
+
+P(next word | current word = "dog"):
+  P(sat | dog) = 2/3 = 0.6667
+  P(ran | dog) = 1/3 = 0.3333
+
+P(next word | current word = "sat"):
+  P(on | sat) = 1.0000
+
+P(next word | current word = "ran"):
+  P(to | ran) = 1.0000
+
+Zero-probability transitions: Many transitions have zero probability because they were never observed in the training data. For example:
+  - P(sat | the) = 0 (we never see "the" directly followed by "sat")
+  - P(cat | cat) = 0 (a word never follows itself in this corpus)
+  - P(the | the) = 0
+  - P(mat | cat) = 0, P(rug | cat) = 0, P(park | cat) = 0
+  - P(on | cat) = 0, P(to | cat) = 0
+In general, for any word pair (wi, wj) not observed consecutively in the training data, P(wj | wi) = 0.
+
+
+Q4. Where in the program are the transition counts stored?
+
+In the first-order model (first_order_model.py), the transition counts are stored in the variable `counts`, which is a nested dictionary (defaultdict of defaultdicts) returned by the function `count_transitions()`. The structure is:
+
+  counts[wi][wj] = C(wi, wj)
+
+where C(wi, wj) is the number of times word wj immediately follows word wi in the training data. For example, counts["the"]["cat"] = 3 because "cat" follows "the" three times across all training sentences.
+
+The function iterates through each tokenised sentence and, for every consecutive pair of tokens (tokens[i], tokens[i+1]), increments counts[tokens[i]][tokens[i+1]] by 1.
+
+
+Q5. Where is P(Xt | Xt-1) computed?
+
+P(Xt | Xt-1) is computed in the function `build_cpt()` (build conditional probability table). This function takes the raw transition counts and normalises them into probability distributions:
+
+  probabilities[wi][wj] = counts[wi][wj] / sum_k(counts[wi][wk])
+
+For each preceding word wi, it sums all the counts of words that follow wi (giving the total number of times wi appears as a non-final token), and then divides each individual count by this total. The result is stored in the dictionary `probabilities`, where probabilities[wi][wj] = P(wj | wi).
+
+For example, if counts["the"]["cat"] = 3, counts["the"]["dog"] = 3, counts["the"]["mat"] = 2, counts["the"]["rug"] = 2, and counts["the"]["park"] = 2, then total = 12, and P(cat | the) = 3/12 = 0.25.
+
+
+Q6. How does the program choose the next word?
+
+The program supports both modes:
+
+Mode B (Sampling from the probability distribution) -- This is the default mode. The function `sample_next_word()` uses Python's `random.choices()` to randomly sample a word from the conditional distribution P(w | current_word). Each possible next word is selected with a probability proportional to its conditional probability. This means less probable words can still be chosen, introducing randomness and variety into the generated text.
+
+Mode A (Always choosing the most probable word) -- The function `predict_most_probable()` uses Python's `max()` to deterministically select argmax_w P(w | current_word), i.e., the word with the highest conditional probability.
+
+The difference between the two is fundamental:
+  - Greedy (argmax) selection is deterministic: given the same starting word, it always produces the exact same sequence. It always picks the single most likely continuation, which can lead to repetitive, looping output (as observed in our experiments where greedy mode produced "the cat sat on the cat sat on the cat..." in an infinite loop until the max-length cutoff).
+  - Sampling is stochastic: it produces different sequences each time, reflecting the full probability distribution. Less likely words occasionally get chosen, leading to more diverse and natural-sounding text. This faithfully represents the uncertainty in the model.
+
+
+Q7. What happens if the program encounters a word for which no transition has been observed?
+
+If the program encounters a word for which no transition has been observed (i.e., a word that never appeared as a non-final token in the training data, so it has no entry in the `probabilities` dictionary), both `sample_next_word()` and `predict_most_probable()` check whether the word exists in the probabilities dictionary. If it does not, they return `None`.
+
+In the `generate_sentence()` function, when `None` is returned, the generation loop breaks immediately, ending the sentence. This means the sentence is terminated prematurely whenever the model encounters an unknown context.
+
+This is a limitation of the simple model: it cannot handle out-of-vocabulary words or words that only appeared at the end of sentences (like "mat", "rug", and "park", which only transition to <END>). In practice, techniques like Laplace smoothing or backoff models could be used to assign small non-zero probabilities to unseen transitions.
+
+
+Q8. If one of the totals is 0.87 (instead of 1.0), what does this tell you about the implementation?
+
+If sum_v P(v | w) = 0.87 for some word w, it means the conditional probability distribution for that word does not normalise to 1.0, which indicates a bug in the implementation. Specifically, it tells us that:
+
+  1. Some probability mass is missing. The implementation is losing approximately 13% of the probability mass somewhere during the computation.
+
+  2. Possible causes include:
+     - Incorrect counting: some transitions from word w may not be counted (e.g., the last bigram in a sentence might be skipped due to an off-by-one error in the loop bounds).
+     - Incorrect normalisation: the denominator used when computing P(v|w) may be too large (e.g., counting some transitions twice in the denominator but not the numerator).
+     - Filtering or rounding errors: some transitions might be accidentally excluded during the probability computation.
+
+  3. The probabilities are not valid as a probability distribution. A valid discrete probability distribution must sum to exactly 1.0 over all possible outcomes. A sum of 0.87 violates this axiom, meaning the model does not define a proper probability distribution and any sampling or inference based on it will be unreliable.
+
+This is precisely why the normalisation test (Part VII) is important: it serves as a probabilistic invariant that must hold if the implementation is correct.
+
+
+Q9. Are the most probable predictions always the same as the words you would personally expect?
+
+Not always. Based on our model's output:
+
+  argmax P(w | the)    = "cat"  (P = 0.25, tied with "dog")
+  argmax P(w | cat)    = "sat"  (P = 0.67)
+  argmax P(w | dog)    = "sat"  (P = 0.67)
+  argmax P(w | sat)    = "on"   (P = 1.00)
+  argmax P(w | ran)    = "to"   (P = 1.00)
+  argmax P(w | on)     = "the"  (P = 1.00)
+  argmax P(w | <START>)= "the"  (P = 1.00)
+
+Some of these match intuition (e.g., "sat" -> "on" feels natural), but others are artifacts of the tiny dataset:
+  - A human might expect "the" to be followed by a much wider variety of nouns and adjectives, not just "cat", "dog", "mat", "rug", or "park".
+  - The model assigns equal probability to "cat" and "dog" after "the", which happens to be true for this corpus but certainly not for English in general.
+  - The model has zero probability for plausible continuations like "the house", "the man", etc., because they never appeared in the training data.
+
+This reveals a fundamental difference between a probability model and human linguistic expectations:
+  - A probability model only reflects patterns observed in its training data. It is a statistical summary of a specific corpus, not a model of language understanding.
+  - Human linguistic expectations are based on vast experience, semantic understanding, world knowledge, and grammatical competence. Humans can predict words they have never seen in a particular context because they understand meaning, syntax, and pragmatics.
+  - A small n-gram model captures surface-level co-occurrence statistics but has no understanding of meaning. It cannot generalise beyond its training data in the way humans can.
+
+
+Q10. Compare the two sets of generated sentences (greedy vs. sampling). Which mode produces more variation? Why?
+
+Greedy (Mode A) -- 5 sentences generated:
+  1. the cat sat on the cat sat on the cat sat on the cat...
+  2. the cat sat on the cat sat on the cat sat on the cat...
+  3. the cat sat on the cat sat on the cat sat on the cat...
+  4. the cat sat on the cat sat on the cat sat on the cat...
+  5. the cat sat on the cat sat on the cat sat on the cat...
+
+Sampling (Mode B) -- 5 sentences generated:
+  1. the mat
+  2. the cat ran to the park
+  3. the mat
+  4. the cat ran to the dog sat on the rug
+  5. the park
+
+Sampling (Mode B) produces far more variation. The reasons are:
+
+1. Greedy mode is entirely deterministic. Since it always picks the single most probable next word, and the starting word is always "the" (P(the | <START>) = 1.0), the greedy chain follows the same path every time: the -> cat (argmax) -> sat -> on -> the -> cat -> sat -> on -> ... creating an infinite loop that only terminates at the max-length cutoff. Every sentence is identical.
+
+2. Sampling mode is stochastic. At each step, the next word is randomly drawn according to the full probability distribution. Even when one word is more probable than another, the less probable words still have a chance of being selected. This means:
+   - After "the", sometimes "dog" is chosen instead of "cat".
+   - After "cat" or "dog", sometimes "ran" is chosen instead of "sat".
+   - Different paths through the model produce diverse sentences.
+
+3. The fundamental reason is that greedy decoding collapses the distribution to a single point (the mode), discarding all uncertainty. Sampling preserves the distributional information, faithfully representing the model's uncertainty about what comes next. In language, uncertainty is natural -- there are usually many plausible continuations -- so sampling produces more realistic and varied output.
+
+
+Q11. How does the second-order model differ from the first-order model?
+
+1. Graph Structure:
+   - First-order: X1 -> X2 -> X3 -> X4 (a simple chain where each node has exactly one parent, the immediately preceding word).
+   - Second-order: Each node Xt has TWO parents: Xt-2 and Xt-1. The structure is Xt-2 -> Xt <- Xt-1. This means each word depends on both of its two preceding words, not just one.
+
+2. Conditional Probability Table (CPT):
+   - First-order: The CPT has entries of the form P(Xt | Xt-1). For a vocabulary of size V, each word has at most V entries in its CPT, giving at most V * V = V^2 total parameters.
+   - Second-order: The CPT has entries of the form P(Xt | Xt-2, Xt-1). For a vocabulary of size V, each pair of preceding words has at most V entries, giving at most V^2 * V = V^3 total parameters. The table is much larger.
+
+3. Amount of Context Available for Prediction:
+   - First-order: Only 1 word of context (the immediately preceding word).
+   - Second-order: 2 words of context (the two preceding words). This allows the model to capture patterns like "on the" -> "mat" vs. "to the" -> "park", which the first-order model cannot distinguish (both just see "the" as context).
+
+4. Amount of Data Needed:
+   - First-order: Needs enough data to reliably estimate P(w | w_prev) for each bigram. With vocabulary V, there are V^2 possible bigrams.
+   - Second-order: Needs enough data to reliably estimate P(w | w_prev2, w_prev1) for each trigram. With vocabulary V, there are V^3 possible trigrams. This is V times more parameters, so substantially more data is needed to get reliable estimates. With limited data, most trigram contexts will have zero observations, leading to many zero-probability entries and sparse, unreliable estimates.
+
+In our experiment: the first-order model had 11 contexts and 17 parameters, while the second-order model had 14 observed contexts and 18 parameters out of 144 possible trigram contexts (V^2 = 12^2 = 144). This means 130 trigram contexts (90%) had zero probability -- a clear illustration of the data sparsity problem.
+
+
+Q12. Why does increasing context potentially improve prediction? Why can it simultaneously make the model harder to estimate?
+
+Increasing context improves prediction because more preceding words provide more information about what is likely to come next. Language has long-range dependencies: knowing just the previous word "the" tells you relatively little, but knowing "ran to the" strongly suggests "park" or a location noun. The second-order model can distinguish contexts like ("on", "the") -> mat/rug from ("to", "the") -> park, which the first-order model conflates into a single context "the" with a mixed distribution over all possible followers.
+
+However, increasing context simultaneously makes the model harder to estimate because of the exponential growth of the conditional probability table:
+  - First-order: O(V^2) parameters (one CPT row per word in the vocabulary).
+  - Second-order: O(V^3) parameters (one CPT row per pair of words).
+  - n-th order: O(V^(n+1)) parameters.
+
+With a fixed amount of training data, as the number of parameters grows exponentially, most parameter combinations (contexts) will never be observed. This is the classic bias-variance tradeoff:
+  - More context = lower bias (the model can represent finer-grained patterns).
+  - More context = higher variance (estimates are based on fewer observations per context, or zero observations for most contexts).
+
+In our experiment, the vocabulary has 12 tokens. The first-order model has 12^2 = 144 possible contexts, of which 11 were observed (92% zero). The second-order model has 12^3 = 1728 possible contexts, but only 14 were observed (99.2% zero). With only 6 training sentences, the vast majority of trigram contexts have no data at all, making the second-order model's probability estimates very sparse and unreliable for unseen contexts.
+
+This is why practical n-gram models use techniques like smoothing (e.g., Laplace smoothing, Kneser-Ney smoothing) or backoff strategies to handle unseen contexts, and why modern language models use neural networks that can generalise to unseen contexts through learned representations.
+
+
+Q13. Why is Approach B ("Implement the following probabilistic model: P(Xt | Xt-1), estimated from transition counts, with sampling-based generation") preferable to Approach A ("Write a Python language model for me")?
+
+Approach B is preferable for the following reasons:
+
+1. Specifying the intended behaviour: Approach B tells the LLM exactly what probability distribution to estimate (P(Xt | Xt-1)), what method to use for estimation (transition counts), and what inference procedure to use (sampling-based generation). This reduces ambiguity drastically. Approach A is vague and could result in anything from a simple bigram model to a transformer-based neural network, and the user would have no way to know whether the output matches their intention.
+2. Understanding the representation: By specifying the model explicitly, the user demonstrates that they understand the mathematical structure -- the variables, their dependencies, and how probabilities are computed. This understanding is essential for debugging, extending, and interpreting the model. With Approach A, the user might receive working code without understanding what it does, making them unable to verify or modify it meaningfully.
+3. Validating the generated implementation: When the model is specified precisely, the user can validate the code against the specification. They can check: "Does this code actually compute P(Xt | Xt-1) from counts? Does it normalise correctly? Does it sample from the right distribution?" With Approach A, there is no specification to validate against -- the user cannot tell whether the LLM's interpretation of "language model" matches their needs.
+4. Testing probabilistic invariants: A well-specified model comes with testable properties, such as "the conditional probabilities must sum to 1" or "the generated text must be consistent with the training distribution." These invariants provide concrete, automated tests that can catch bugs. Approach A provides no such invariants because the model is not specified.
+5. Distinguishing implementation from model: Approach B maintains a clear separation between the probabilistic model (what we want to compute) and the implementation (how the code computes it). This distinction is critical in AI and statistics: the model is the mathematical object; the code is one possible realisation. Bugs live in the implementation, not the model. By specifying the model first, we can check whether the implementation faithfully realises the model. With Approach A, model and implementation are conflated, making it impossible to reason about correctness at the mathematical level.
+
+In summary, Approach B embodies the scientific methodology of "specify, implement, test" -- the same methodology used throughout science and engineering. The LLM is used as a code-generation tool within a well-defined framework, not as an oracle that produces opaque solutions.
+
+
+Q14. What did thinking of the language model as a Bayesian network give you?
+
+Thinking of the language model as a Bayesian network provided several important conceptual and practical benefits:
+
+1. A representation of dependencies: The Bayesian network graph (X1 -> X2 -> X3 -> ... -> XT for first-order, or the two-parent structure for second-order) makes the dependency structure explicit and visual. We can immediately see which variables influence which others. For the first-order model, the graph shows that each word depends only on its immediate predecessor. For the second-order model, the graph shows that each word depends on two predecessors. This clarity helps in understanding, communicating, and reasoning about the model.
+2. A factorisation of the joint distribution: The Bayesian network directly encodes the factorisation P(X1, ..., XT) = P(X1) * product of P(Xt | parents(Xt)). This factorisation is not just a mathematical convenience -- it is what makes the model computationally tractable. Instead of specifying the full joint distribution over all possible sentences (which grows exponentially), we only need to specify local conditional distributions. The Bayesian network framework tells us exactly which factorisation is valid given the assumed dependency structure.
+3. A way of interpreting conditional probabilities: The Bayesian network gives each conditional probability a clear interpretation: P(Xt | Xt-1) is the probability of the next word given the current word, which is exactly the quantity we estimate from data using transition counts. This interpretation connects the abstract mathematics to concrete data operations (counting co-occurrences and normalising). Without the BN framework, the conditional probabilities would be just numbers; with it, they have a clear graphical and causal interpretation.
+4. A principled method for generation: The Bayesian network structure directly implies a generation algorithm: ancestral sampling. We sample X1 from P(X1), then X2 from P(X2 | X1), then X3 from P(X3 | X2), and so on. This is not an ad hoc procedure -- it is the standard method for generating samples from a Bayesian network by following the topological order of the graph. The BN framework guarantees that this procedure produces samples from the correct joint distribution.
+5. A way to reason about independence assumptions: The BN graph makes independence assumptions explicit. The first-order Markov assumption (Xt is independent of X1,...,X(t-2) given X(t-1)) is visible in the graph structure: there is no direct edge from X1 to X3 in the first-order chain. When we move to the second-order model, we can see exactly which new dependencies are added and which independences are relaxed. This allows principled reasoning about the tradeoff between model expressiveness and data requirements.
+6. A way to understand the effect of increasing context: By comparing the first-order BN (one parent per node) with the second-order BN (two parents per node), we can visually and mathematically understand what happens when we increase context. The CPT grows, the number of parameters grows, the model becomes more expressive but also more data-hungry. The BN framework makes this tradeoff concrete and quantifiable.
+7. A way to test whether an implementation matches its probabilistic specification: The BN framework provides testable invariants. The most fundamental is that conditional distributions must normalise to 1: for every context w, sum_v P(v | w) = 1. This gives us a direct, automated test that the implementation is correct. Without the BN framework, we would have no principled way to validate the code against its intended probabilistic semantics.
+
+
+Reflection: How the LLM Was Used and How Its Output Was Validated
+
+Throughout this laboratory, an LLM was used as a code-generation assistant -- not as a replacement for understanding the probabilistic model. The workflow followed was: first understand the model mathematically, then specify it precisely in a prompt, then inspect and test the generated code.
+
+1. How the LLM was used:
+   The LLM was given a detailed behavioural specification following Approach B from the lab. Rather than asking "write a language model," the prompt specified:
+   - The exact probability distribution to estimate: P(Xt | Xt-1) for the first-order model and P(Xt | Xt-2, Xt-1) for the second-order model.
+   - The estimation method: counting transitions between consecutive tokens and normalising to obtain conditional probabilities.
+   - The generation procedure: sampling from the conditional distribution, with support for both greedy (argmax) and stochastic (sampling) modes.
+   - Constraints: no machine-learning libraries, no pretrained models -- only plain Python data structures and random sampling.
+   This ensured the LLM produced code that matched the intended probabilistic model rather than an arbitrary interpretation.
+
+2. How the output was validated:
+
+   a. Code inspection: Every function in the LLM-generated code was manually inspected to verify it matched the mathematical specification. Key checkpoints included:
+      - The count_transitions() function correctly iterates over consecutive token pairs and increments counts[wi][wj].
+      - The build_cpt() function correctly normalises by dividing each count by the row total: P(wj|wi) = C(wi,wj) / sum_k C(wi,wk).
+      - The sample_next_word() function uses random.choices() with the correct probability weights.
+      - The generate_sentence() function correctly chains conditional samples and terminates on <END>.
+
+   b. Probabilistic invariant testing: A normalisation test was written to verify that for every conditioning word w, the sum of P(v|w) over all v equals 1.0. This test was run for both the first-order and second-order models. All distributions passed, confirming the CPTs are valid probability distributions.
+
+   c. Output sanity checking: Generated sentences were manually reviewed to ensure they were plausible given the training data. For example, "the cat sat on the mat" and "the dog ran to the park" are sentences that the model should be able to produce, and they appeared in the output.
+
+3. Example of LLM-generated code that was inspected and corrected:
+   The LLM initially generated print statements using Unicode characters (a checkmark symbol) in the normalisation test output:
+   
+     print("  All distributions normalise to 1.0. [checkmark symbol]")
+   
+   This caused a UnicodeEncodeError on Windows because the default console encoding (cp1252) cannot represent the Unicode checkmark character. The error was:
+   
+     UnicodeEncodeError: 'charmap' codec can't encode character '\u2713'
+   
+   This was identified by running the code and observing the crash. The fix was to replace the Unicode checkmark with an ASCII-safe alternative:
+   
+     print("  All distributions normalise to 1.0. [PASS]")
+   
+   This is a concrete example of why LLM-generated code must always be tested before being accepted: the LLM produced syntactically correct Python that failed at runtime due to a platform-specific encoding issue it did not anticipate.
+
+4. Key lesson:
+   The LLM was most useful when given a precise specification grounded in the probabilistic model. The combination of mathematical understanding (knowing what the code should compute), code inspection (verifying the implementation logic), and automated testing (checking probabilistic invariants) provided a robust validation framework. The LLM accelerated implementation, but understanding and validation remained the responsibility of the user.
