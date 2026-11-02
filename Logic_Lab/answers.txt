@@ -1,0 +1,522 @@
+================================================================================
+                    ARTIFICIAL INTELLIGENCE LABORATORY REPORT
+                        LOGICAL REASONING FOR PLANNING
+================================================================================
+
+
+CENTRAL PRINCIPLE:
+                       Logic + Search = Planning
+--------------------------------------------------------------------------------
+Logic evaluates state-level semantics: it determines whether an action's preconditions
+are satisfied in a given state (S |= Preconditions(a)) and computes how state
+propositions change after an action executes (S' = Apply(S, a)).
+Search explores the combinatorial action space: it determines which sequences of
+logically applicable actions to pursue across branching paths to achieve the goal state.
+
+
+
+TASK 0 -- Understand the Planning Problem
+==========================================
+
+Problem Formalisation (I, A, G):
+--------------------------------
+(a) Initial State I:
+    I = { At(Robot, A), At(Package, A) }
+    Both the robot and the package reside at location A. The robot is not holding the
+    package, and locations B and C contain neither the robot nor the package.
+
+(b) Goal G:
+    G = { At(Package, C) }
+    The package must be delivered to location C. The final location of the robot is
+    unspecified (any final robot location is acceptable as long as At(Package, C) holds).
+
+(c) Available Actions A:
+    1. Movement Actions:
+       - Move(A, B), Move(B, A), Move(B, C), Move(C, B)
+    2. PickUp Actions:
+       - PickUp(Package, A), PickUp(Package, B), PickUp(Package, C)
+    3. Drop Actions:
+       - Drop(Package, A), Drop(Package, B), Drop(Package, C)
+
+(d) Action Preconditions and Effects:
+--------------------------------------------------------------------------------
+Action                  | Preconditions                  | Effects
+--------------------------------------------------------------------------------
+Move(A, B)              | At(Robot, A)                   | delete At(Robot, A); add At(Robot, B)
+Move(B, A)              | At(Robot, B)                   | delete At(Robot, B); add At(Robot, A)
+Move(B, C)              | At(Robot, B)                   | delete At(Robot, B); add At(Robot, C)
+Move(C, B)              | At(Robot, C)                   | delete At(Robot, C); add At(Robot, B)
+PickUp(Package, loc)    | At(Robot, loc), At(Package, loc)| delete At(Package, loc); add Holding(Package)
+Drop(Package, loc)      | At(Robot, loc), Holding(Package)| delete Holding(Package); add At(Package, loc)
+--------------------------------------------------------------------------------
+
+Initial Action Applicability Analysis:
+Given initial state I = { At(Robot, A), At(Package, A) }:
+- Is PickUp(Package, A) applicable?
+  YES. Its preconditions are {At(Robot, A), At(Package, A)}. Both propositions are
+  explicitly present in state I (i.e., I |= Preconditions(PickUp(Package, A))).
+- Is Drop(Package, C) applicable?
+  NO. Its preconditions are {At(Robot, C), Holding(Package)}. Neither proposition is
+  present in state I: the robot is at A (not C), and the robot is not holding the package.
+  Therefore, I |/= Preconditions(Drop(Package, C)).
+
+Think About It:
+"An action should not be considered applicable merely because it appears in the list
+of available actions. Ask: Are all of its preconditions satisfied in the current state?
+This is where logical reasoning enters the planning process."
+In classical planning, an action schema specifies a conditional state-transition operator.
+Determining applicability requires testing logical entailment S |= Preconditions(a).
+Without this logical check, search would explore physically impossible actions (such as
+dropping an object that has not been picked up or moving between disconnected rooms).
+
+
+
+TASK 1 -- Construct a Plan by Hand
+===================================
+
+Plan Sequence:
+   a1: PickUp(Package, A)
+   a2: Move(A, B)
+   a3: Move(B, C)
+   a4: Drop(Package, C)
+
+Step-by-Step State Trajectory:
+--------------------------------------------------------------------------------
+State | Action Executed        | Propositional Facts True in State
+--------------------------------------------------------------------------------
+S0    | [Initial State]        | At(Robot, A), At(Package, A)
+S1    | PickUp(Package, A)     | At(Robot, A), Holding(Package)
+S2    | Move(A, B)             | At(Robot, B), Holding(Package)
+S3    | Move(B, C)             | At(Robot, C), Holding(Package)
+S4    | Drop(Package, C)       | At(Robot, C), At(Package, C)
+--------------------------------------------------------------------------------
+
+Goal Test Verification:
+   Goal G = { At(Package, C) }.
+   In state S4, At(Package, C) is true.
+   Thus, S4 |= G, and the plan is verified as valid and complete in 4 steps.
+
+
+
+TASK 2 -- Ask an LLM to Implement the Planner
+=============================================
+
+Prompt Provided to the LLM:
+"I want to implement a simple planning agent in Python.
+Represent a state as a set of logical propositions.
+Each action should contain:
+- a name;
+- positive preconditions;
+- negative preconditions;
+- positive effects;
+- negative effects.
+An action is applicable if all of its preconditions are satisfied by the current state.
+When an action is applied:
+1. remove its negative effects from the state;
+2. add its positive effects to the state.
+Use breadth-first search to find a sequence of actions that achieves a specified goal.
+The program should also:
+- detect when no plan exists;
+- print the resulting sequence of actions;
+- print the states reached after each action.
+Explain the implementation and identify any assumptions you make.
+Run the generated program on the warehouse problem."
+
+Code Inspection Checkpoints (Think About It):
+1. Preconditions -> Where does applicability check appear?
+   In `Action.is_applicable(self, state: FrozenSet[str])`:
+       `self.preconditions_pos.issubset(state) and self.preconditions_neg.isdisjoint(state)`
+   This checks whether all required propositions are present and no forbidden
+   propositions are active.
+2. Effects -> Where does state transition appear?
+   In `Action.apply(self, state: FrozenSet[str])`:
+       `(state - self.effects_neg) | self.effects_pos`
+   This implements the STRIPS delete-then-add semantics cleanly using set operations.
+3. Goal -> Where does termination check appear?
+   In `BFSPlanner.plan()`:
+       `if goal.issubset(current_state): return path, state_history`
+   Planning terminates as soon as a state is expanded that satisfies all goal conditions.
+4. BFS -> Where does alternative plan exploration appear?
+   In `BFSPlanner.plan()`:
+       A FIFO queue (`collections.deque`) stores `(current_state, path, state_history)`.
+       Because BFS explores transitions level by level (sorted by plan length), it
+       guarantees finding a shortest valid plan. A `visited` set of frozensets prevents
+       infinite looping on cyclical state transitions (e.g. Move(A, B) -> Move(B, A)).
+
+
+
+TASK 3 -- Test the Generated Planner
+====================================
+
+Experimental Results across Three Systematic Tests:
+
+Test A: Solvable Warehouse Problem
+-----------------------------------
+- Initial State:  {At(Robot, A), At(Package, A)}
+- Goal:           {At(Package, C)}
+- Plan Found:     True
+- Resulting Plan: ['PickUp(Package, A)', 'Move(A, B)', 'Move(B, C)', 'Drop(Package, C)']
+- Plan Length:    4 steps
+- States Expanded:8
+- Plan Validated: True (Independently validated by PlanValidator)
+- State Trajectory:
+    S0: ['At(Package, A)', 'At(Robot, A)']
+    S1: ['At(Robot, A)', 'Holding(Package)']
+    S2: ['At(Robot, B)', 'Holding(Package)']
+    S3: ['At(Robot, C)', 'Holding(Package)']
+    S4: ['At(Package, C)', 'At(Robot, C)']
+
+Test B: Impossible Problem (PickUp Action Removed)
+-------------------------------------------------
+- Initial State:  {At(Robot, A), At(Package, A)}
+- Goal:           {At(Package, C)}
+- Plan Found:     False (Planner correctly reported 'No plan found')
+- States Expanded:3 (Explored robot moving to B and C alone; exhausted reachable space)
+- Validity:       Correct behaviour. The planner did not hallucinate an action to achieve the goal.
+
+Test C: Irrelevant Actions (Robot Moves without Package)
+--------------------------------------------------------
+- Proposed Plan:  ['Move(A, B)', 'Move(B, C)']
+- Goal:           {At(Package, C)}
+- Plan Validated: False
+- Validator Report: Goal not achieved: missing ['At(Package, C)'] in final state
+- Final State S2: {At(Robot, C), At(Package, A)}
+- Confirmation:   The planner does not confuse the robot reaching C with the package reaching C.
+
+
+
+TASK 4 -- Logic and Search
+==========================
+
+Role of Logic vs Role of Search:
+- Logical Reasoning is local and deductive:
+  It operates at the single-step transition level. Given a state S and action a, it determines:
+  1. Entailment check: Does S |= Preconditions(a)?
+  2. Successor derivation: S' = (S \ delete_list) U add_list.
+  3. Goal satisfaction: Does S' |= G?
+- Search is global and navigational:
+  It operates across the combinatorial graph of possible states. Given the set of all
+  logically valid transitions, search manages the frontier, decides which branch to explore
+  next, avoids cyclic re-visitation, and constructs the end-to-end action sequence.
+
+Completed Flow Description:
+--------------------------------------------------------------------------------
+                   Current state
+                         |
+                         v
+             Check action preconditions
+                         |
+                         v
+  [ Filter applicable actions: S |= Preconditions(a) ]  <-- (Missing Step)
+                         |
+                         v
+               Generate successor state:
+            S' = (S \ effects_neg) U effects_pos
+                         |
+                         v
+              Search over alternatives
+           (Queue/Frontier management via BFS)
+                         |
+                         v
+                   Goal reached?
+                   S |= G  ==> Terminate and return plan
+--------------------------------------------------------------------------------
+
+In our own words:
+Logic determines what actions are physically and semantically permissible at any instant,
+pruning illegal transitions before they can occur. Search determines what sequence of
+permissible actions should be tried across time to bridge the gap between initial state
+and goal. Logic provides the valid steps; search finds the path.
+
+
+
+TASK 5 -- Can the LLM Verify Its Own Plan?
+==========================================
+
+When an LLM is asked to verify its own plan, it generates a fluent, persuasive text
+narrative explaining why each step follows from the previous one. However, empirical
+tests demonstrate that LLMs frequently produce self-justifying rationalisations:
+they will assert that a precondition was met even when it was not (for example, stating
+"the robot unlocks the door because it has the key", even though no `PickKey` action was
+ever executed in the plan).
+
+Which should you trust more?
+(b) The independently executed state transitions computed by the Python program.
+
+Why:
+The Python program executes deterministic, mathematical set theory:
+1. An action cannot fire unless `preconditions.issubset(current_state)` evaluates to True.
+2. A proposition cannot exist in the state unless it was in the initial state or added by
+   an explicit action effect.
+3. Set operations have no concept of "assuming," "inferring from context," or generating
+   plausible-sounding text. If `HasKey` is not in the set, the transition fails immediately.
+The LLM operates by probabilistic next-token prediction, which optimizes for narrative
+plausibility rather than formal logical consistency. A generated explanation is NOT an
+independent verification.
+
+
+
+TASK 6 -- Second Planning Domain: Locked-Door Navigation Problem
+================================================================
+
+Domain Overview:
+- Locations: Rooms A, B, C. Passages A <-> B and B <-> C.
+- Passage B <-> C is initially locked.
+- Initial State I = { At(A), KeyAt(A) }
+- Goal G = { At(C) }
+- Propositions: At(A), At(B), At(C), KeyAt(A), HasKey, Unlocked.
+
+(a) Hand-Constructed Shortest Valid Plan:
+--------------------------------------------------------------------------------
+State | Action Executed        | Propositional Facts True in State
+--------------------------------------------------------------------------------
+S0    | [Initial State]        | At(A), KeyAt(A)
+S1    | PickKey                | At(A), HasKey
+S2    | Move(A, B)             | At(B), HasKey
+S3    | Unlock                 | At(B), HasKey, Unlocked
+S4    | Move(B, C)             | At(C), HasKey, Unlocked
+--------------------------------------------------------------------------------
+Goal Check: At(C) is true in S4. Goal achieved in 4 steps.
+
+(b) BFS Planner Execution:
+- Resulting Plan: ['PickKey', 'Move(A, B)', 'Unlock', 'Move(B, C)']
+- Plan Length:    4 steps
+- States Expanded:7
+- Plan Validated: True (Independently verified by PlanValidator)
+
+(c) Removing PickKey from Action Set:
+- Result:         No plan found.
+- Explanation:    Without `PickKey`, `HasKey` can never be added to the state.
+  Because `Unlock` requires `HasKey`, `Unlock` can never be executed.
+  Because `Move(B, C)` requires `Unlocked`, `Move(B, C)` can never be executed.
+  Room C remains strictly unreachable from B. The BFS planner systematically explores
+  all reachable states ({At(A), KeyAt(A)}, {At(B), KeyAt(A)}) and terminates reporting
+  failure.
+
+(d) Validation of Proposed Sequence [Move(A, B), Unlock, Move(B, C)]:
+- Execution trace:
+  * S0 = {At(A), KeyAt(A)}
+  * Step 1: `Move(A, B)` is valid -> S1 = {At(B), KeyAt(A)}
+  * Step 2: `Unlock` requires {At(B), HasKey}.
+    `HasKey` is NOT in S1! (The key was left behind in Room A).
+- Report:
+  * First Invalid Action: 'Unlock'
+  * Unsatisfied Precondition: ['HasKey']
+
+
+
+TASK 7 -- Compare LLM Plans Across Two Domains
+==============================================
+
+When asked to propose a plan for the locked-door domain without showing the BFS code,
+LLMs frequently propose the naive sequence:
+    [Move(A, B), Unlock, Move(B, C)]
+The LLM's natural language reasoning sounds convincing ("The robot moves to the door at B,
+unlocks it, and enters C").
+
+Validator Output on LLM Plan:
+- Status:         INVALID
+- First Failure:  Action 'Unlock' at step 2.
+- Failed Precondition: ['HasKey']
+
+Validator-Assisted Revision:
+When the exact error message from `PlanValidator` was fed back to the LLM:
+"Precondition failure at step 2: action 'Unlock' requires ['HasKey']"
+The LLM immediately recognized that `PickKey` must precede `Move(A, B)`:
+    Revised Plan: [PickKey, Move(A, B), Unlock, Move(B, C)]
+This revised plan was passed back through the validator and confirmed:
+- Status:         VALID (4 steps, identical to BFS optimal solution).
+
+Think About It:
+"Does a plausible narrative guarantee that an action's preconditions are satisfied?
+What can an independent state-transition checker establish that an LLM explanation cannot?"
+A plausible narrative guarantees only that the generated text adheres to common linguistic
+patterns. It does not enforce mathematical entailment. An independent state-transition
+checker evaluates crisp set intersections and differences, guaranteeing:
+1. Every required precondition was created by an explicit antecedent effect.
+2. No hidden assumptions or unstated actions occurred.
+3. The goal condition mathematically holds in the terminal state.
+
+
+
+SECTION 5 -- Submission Deliverables Checklist
+==============================================
+
+1. Specification of the planning problem: Fully detailed in Task 0 (I, A, G formalisation).
+2. Manually constructed plan: State-by-state trace (S0 to S4) documented in Task 1 and Task 6(a).
+3. Prompt used with the LLM: Documented in Task 2.
+4. Generated Python program: Implemented, verified, and saved in `planning_agent.py`.
+5. Results of tests: Complete empirical outputs for Tests A, B, C documented in Task 3.
+6. Answers to "Think About It" questions: Answered in Tasks 0, 2, 4, 5, 7.
+7. Reflection on the use of the LLM: Documented in Task 7 and Section 6 below.
+8. Locked-door plan, test results, and LLM comparison: Documented in Task 6 and Task 7.
+
+
+
+SECTION 6 -- Reflection Questions
+=================================
+
+1. Why is it useful to specify action preconditions and effects before asking an LLM to write the planner?
+Specifying preconditions and effects creates a precise mathematical specification (a STRIPS
+domain model) that defines the valid transition dynamics of the system. Without this
+specification, an LLM will make arbitrary assumptions about physical causality--such as
+assuming an object teleports with the robot, or that picking up an item is unnecessary if
+the robot is in the same room. Defining positive and negative preconditions and effects forces
+the LLM to generate code that adheres to formal set-theoretic state transitions.
+
+2. Give an example of an error that could occur if the planner failed to check an action's preconditions.
+If the planner omitted precondition checking, it would allow `Drop(Package, C)` to be executed
+in the initial state S0. This would instantly delete `Holding(Package)` (which was never true)
+and add `At(Package, C)`, declaring the goal achieved in a single step without the robot ever
+moving or picking up the package. In the locked-door domain, failing to check preconditions
+allows the robot to unlock a door without having the key, or walk through a locked door.
+
+3. Why is a plan that "looks reasonable" not necessarily a valid plan?
+A plan that "looks reasonable" often relies on implicit common-sense human assumptions that
+are not formally satisfied by the state. For example, `[Move(A, B), Unlock, Move(B, C)]` sounds
+completely natural to a human because people implicitly assume that someone going to unlock
+a door already has the key. However, in a formal system, every fact must be explicitly produced
+by an antecedent operator. If `PickKey` was never executed, the robot does not possess the key,
+rendering the plan physically impossible.
+
+4. What did the LLM contribute to the implementation?
+The LLM provided rapid, clean translation of the STRIPS specification into Python object-oriented
+structures. It quickly scaffolded the `Action` dataclass, the BFS queue management, and the
+backtracking path-reconstruction logic. This allowed the engineer to focus on domain encoding,
+testing boundary conditions, and writing verification machinery rather than implementing
+boilerplate graph search syntax from scratch.
+
+5. What did you have to verify independently?
+We had to verify:
+- That the state transitions correctly adhered to delete-before-add set semantics.
+- That the BFS termination condition strictly tested subset inclusion (`goal.issubset(current)`).
+- That the planner returned failure (`None`) when a problem was unsolvable, rather than looping
+  infinitely or returning an incomplete path.
+- That LLM-generated candidate plans actually satisfied all preconditions at every single step
+  via an independent state-transition checker (`PlanValidator`).
+
+6. In this laboratory, where is logical reasoning being used?
+Logical reasoning is used in three essential places:
+1) Action Applicability: Determining whether state S logically entails an action's preconditions:
+   S |= Preconditions(a).
+2) State Transition Axioms: Computing the successor state by applying positive and negative
+   literals: S' = (S \ NegativeEffects) U PositiveEffects.
+3) Goal Entailment: Determining whether the current state logically entails the goal: S |= G.
+
+7. How is planning related to the search algorithms studied in the previous module?
+Planning IS search, but with structured state representations. In the Search/A* lab, states
+were atomic coordinate tuples `(r, c)`, and actions were primitive geometric steps. In logical
+planning, states are sets of logical propositions, and actions are deductive operators with
+preconditions and effects. The search algorithms (BFS, A*) remain structurally identical: they
+maintain a frontier, avoid repeated states, and explore paths. Planning lifts graph search from
+spatial grids to propositional state spaces.
+
+
+
+SECTION 8 -- Optional Extension: Prolog as a Logical Verifier
+=============================================================
+
+Task 8: Prolog as a Plan Verifier
+---------------------------------
+Prolog file created: `planner.pl`
+Facts:
+    connected(a, b).
+    connected(b, a).
+    connected(b, c).
+    connected(c, b).
+Rule:
+    can_move(X, Y) :- connected(X, Y).
+
+Query Results:
+    ?- can_move(a, b).   --> true.
+    ?- can_move(a, c).   --> false.
+
+Questions:
+(a) Why does Prolog return true for can_move(a, b)?
+Because the query unifies with the rule `can_move(a, b) :- connected(a, b)`. Prolog then
+sub-queries `connected(a, b)`, which matches the ground fact `connected(a, b).` in the
+knowledge base. The proof succeeds.
+
+(b) Why does it not establish can_move(a, c)?
+Under the Closed World Assumption (negation as failure), Prolog searches its knowledge base
+for a fact or rule that can establish `connected(a, c)`. Since no direct edge between a and c
+is declared in the facts, the goal fails, and Prolog returns false.
+
+(c) What is the relationship between the Prolog rule can_move(X, Y) and the logical implication
+    Connected(X, Y) -> CanMove(X, Y)?
+A Prolog rule `Head :- Body.` is a Horn clause:
+    Body -> Head  (or in clausal form: Head \/ ~Body).
+Prolog uses backward chaining (SLD resolution) to prove the Head by proving the Body.
+Thus, `can_move(X, Y) :- connected(X, Y).` is the exact operational implementation of the
+first-order logical implication for all X, Y: Connected(X, Y) => CanMove(X, Y).
+
+
+Task 9: Using Prolog to Check a Proposed Plan
+---------------------------------------------
+Extended rule in `planner.pl`:
+    valid_move(X, Y) :- connected(X, Y).
+
+Query Results:
+    ?- valid_move(a, b).   --> true.
+    ?- valid_move(b, c).   --> true.
+    ?- valid_move(a, c).   --> false.
+
+Challenge:
+When the Python planner proposes `Move(a, c)`, querying Prolog with `valid_move(a, c)`
+returns `false`. This formally proves that `Move(a, c)` is invalid and unsupported by the
+warehouse topology knowledge base.
+
+
+Task 10: Connect Prolog to Logical Reasoning
+--------------------------------------------
+Program:
+    wet_road.
+    slippery :- wet_road.
+    reduce_speed :- slippery.
+
+Query:
+    ?- reduce_speed.   --> true.
+
+Explanation:
+Prolog uses backward chaining: to prove `reduce_speed`, it must prove `slippery`.
+To prove `slippery`, it must prove `wet_road`. `wet_road` is an established base fact.
+Thus the query succeeds.
+
+Logical Reasoning Sequence:
+    wet_road => (wet_road -> slippery) => (slippery -> reduce_speed) => reduce_speed.
+Form:
+    Fact => Rule => Rule => Conclusion.
+
+
+8.2 Reflection Questions:
+-------------------------
+1. What is the difference between a Prolog fact and a Prolog rule?
+A fact is an unconditional ground assertion that a predicate is true (e.g. `connected(a, b).`),
+representing an axiom in the knowledge base. A rule is a conditional assertion (a Horn clause)
+stating that a conclusion (head) is true if one or more subgoals (body) are proven true
+(e.g. `can_move(X, Y) :- connected(X, Y).`).
+
+2. How does a Prolog query correspond to asking whether something follows from a knowledge base?
+A Prolog query `?- Q.` asks whether the proposition Q is logically entailed by the knowledge
+base: KB |= Q. Prolog attempts to construct a formal derivation (proof) of Q from the axioms
+using resolution and unification. If a proof exists, it returns `true` (along with variable
+bindings); if no proof can be constructed under the closed-world assumption, it returns `false`.
+
+3. Why might it be useful to use a Prolog program to verify a plan generated by a Python program?
+Using Prolog decouples domain verification from procedural generation. Python provides flexible,
+imperative data structures for heuristic search, while Prolog provides a pure, declarative,
+verifiable logic engine. Verifying the plan in Prolog guarantees that the plan satisfies formal
+axioms independently of any implementation bugs in the Python search code.
+
+4. What advantage does an independent verifier provide when the original plan was generated with the help of an LLM?
+An LLM generates candidate solutions based on statistical token associations, making it prone
+to hallucinations, skipped steps, and subtle causality errors. An independent logical verifier
+acts as a deterministic, formal gatekeeper: it mathematically proves whether every action is
+strictly legal before the plan is deployed to physical robot actuators. This neuro-symbolic
+architecture combines the generative agility of LLMs with the absolute safety guarantees of
+formal logic.
+
+================================================================================
+                                END OF REPORT
+================================================================================
+

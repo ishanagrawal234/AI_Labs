@@ -1,0 +1,32 @@
+TASK 1 — Understanding the Problem
+
+1. The environment is a 2D grid (7x21) representing a warehouse with walls, free space, a start and a goal position.
+2. The agent's goal is to find a path from S (loading bay) to G (dispatch area) without hitting any obstacles.
+3. The agent can move Up, Down, Left, or Right — one square at a time.
+4. It needs to keep track of the map, its current position, where the goal is, and which cells it has already visited so it doesn't go in circles.
+5. A simple reflex agent just reacts to what's directly around it (like 'if wall ahead, turn'). This agent actually plans ahead — it searches through possible paths to reach a specific goal. That's what makes it goal-based.
+
+Think About It:
+If the warehouse doubles in size, BFS still works but it'll use a lot more memory and take longer since there are way more cells to explore. A smarter algorithm like A* would be better for larger grids because it focuses the search toward the goal instead of exploring everything.
+
+
+TASK 2 — Designing the Agent
+
+- Environment: The warehouse grid with obstacles and free cells.
+- State: The agent's current position on the grid.
+- Goal: Reach position G.
+- Actions: Move up, down, left, or right (only into free cells).
+- Decision-making: Uses BFS to search for the shortest path before moving.
+
+The flow is: the agent reads the grid -> keeps track of where it is and what it's visited -> uses BFS to figure out the best path to G -> follows that path.
+
+
+TASK 3 — Prompt Engineering
+
+Prompt I used:
+'Write a well-documented Python program implementing a goal-based agent for a warehouse navigation problem. The warehouse is a grid where S is the start, G is the goal, # is an obstacle, and . is free space. The agent can move up/down/left/right. It should find a collision-free path from S to G using a search algorithm and print the result.'
+
+1. Yes, the program worked on the first attempt.
+2. If it hadn't, I would have been more specific — like giving example output, specifying which algorithm to use, or breaking the task into smaller prompts.
+3. The LLM chose Breadth-First Search (BFS).
+4. BFS makes sense here because all moves cost the same (one square), so BFS is guaranteed to find the shortest path. It's also simple and doesn't need a heuristic like A* does.
